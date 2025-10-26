@@ -1,7 +1,7 @@
 import logging
 import re
 import asyncio
-import aiohttp  # For async HTTP; fallback to requests if needed
+import aiohttp
 from bs4 import BeautifulSoup
 import discord
 from discord.ext import commands
@@ -13,16 +13,13 @@ logger = logging.getLogger(__name__)
 
 # Bot configuration
 BOT_TOKEN = 'YOUR_BOT_TOKEN'  # Replace with your Discord bot token
-ADMIN_USER_ID = '1405866008127864852'  # Updated admin ID
+ADMIN_USER_ID = '1405866008127864852'  # Your admin ID
 PANEL_URL = 'http://103.174.247.155:3000'
 PANEL_USER = 'admin'
 PANEL_PASS = 'Ankit790$'
 
-# Global session for HTTP requests (use aiohttp for async)
-async def get_session():
-    return aiohttp.ClientSession()
-
-session = None  # Will be initialized async
+# Global session for HTTP requests
+session = None
 
 # Bot setup
 intents = discord.Intents.default()
@@ -35,13 +32,13 @@ def is_admin(user_id: str) -> bool:
 async def login_to_panel():
     """Async login to GVM Panel."""
     global session
-    if session is None:
+    if session is None or session.closed:
         session = aiohttp.ClientSession()
     login_url = f'{PANEL_URL}/login'
     data = {'username': PANEL_USER, 'password': PANEL_PASS}
     async with session.post(login_url, data=data) as resp:
         text = await resp.text()
-        logger.info(f"Login response: {resp.status} - {text[:200]}...")
+        logger.info(f"Login response: {resp.status} - {text[:500]}...")
         return resp.status == 200 and ('dashboard' in str(resp.url).lower() or 'success' in text.lower())
 
 async def create_vps(name: str, ram: int, cpu: int, disk: int, os: str, user: str, tags: str) -> dict:
@@ -66,11 +63,10 @@ async def create_vps(name: str, ram: int, cpu: int, disk: int, os: str, user: st
     logger.info(f"Sending create request with data: {form_data}")
     async with session.post(create_url, data=form_data) as resp:
         text = await resp.text()
-        logger.info(f"Create response: {resp.status} - {text[:200]}...")
+        logger.info(f"Create response: {resp.status} - {text[:500]}...")
 
         if resp.status == 200:
-            if 'successfully' in text.lower():
-                # Extract all details with regex
+            if any(keyword in text.lower() for keyword in ['successfully', 'created', 'success']):
                 details = {
                     'vps_id': re.search(r'VPS ID:\s*([A-Z0-9]+)', text).group(1) if re.search(r'VPS ID:\s*([A-Z0-9]+)', text) else 'N/A',
                     'username': re.search(r'Username:\s*(\w+)', text).group(1) if re.search(r'Username:\s*(\w+)', text) else 'root',
@@ -86,7 +82,7 @@ async def create_vps(name: str, ram: int, cpu: int, disk: int, os: str, user: st
                 ssh_command = f"ssh {details['username']}@{details['ssh_host']} -p {details['ssh_port']}"
                 details['ssh_command'] = ssh_command
                 return details
-            return {"error": "❌ Failed to create VPS. Response indicates success but no 'successfully' found. Check logs."}
+            return {"error": "❌ Failed to create VPS. Response indicates success but no 'successfully', 'created', or 'success' found. Check logs."}
         return {"error": f"❌ Failed to create VPS. Status: {resp.status}"}
 
 async def list_vps(own_only: bool = True) -> str:
@@ -94,7 +90,7 @@ async def list_vps(own_only: bool = True) -> str:
     if not await login_to_panel():
         return "❌ Failed to authenticate."
     
-    list_url = f'{PANEL_URL}/list_vps'  # Or /vps/list
+    list_url = f'{PANEL_URL}/list_vps'
     async with session.get(list_url) as resp:
         if resp.status != 200:
             return "❌ Failed to fetch VPS list."
@@ -105,9 +101,9 @@ async def list_vps(own_only: bool = True) -> str:
             return "No VPS found."
         
         message = "📋 VPS List:\n"
-        for row in vps_rows[1:]:  # Skip header
+        for row in vps_rows[1:]:
             cells = row.find_all('td')
-            if len(cells) >= 6:  # Assume columns: ID, Name, Status, Memory, CPU, Disk
+            if len(cells) >= 6:
                 vps_id = cells[0].text.strip()
                 name = cells[1].text.strip()
                 status = cells[2].text.strip()
@@ -116,7 +112,7 @@ async def list_vps(own_only: bool = True) -> str:
                 disk = cells[5].text.strip()
                 message += f"• **ID:** {vps_id} | **Name:** {name} | **Status:** {status} | **RAM:** {memory} | **CPU:** {cpu} | **Disk:** {disk}\n"
                 if own_only:
-                    break  # Limit for own; adjust filter if user-specific
+                    break
         return message if message != "📋 VPS List:\n" else "No VPS to show."
 
 async def manage_action(vps_id: str, action: str) -> str:
@@ -124,9 +120,10 @@ async def manage_action(vps_id: str, action: str) -> str:
     if not await login_to_panel():
         return "❌ Failed to authenticate."
     
-    action_url = f'{PANEL_URL}/vps/{vps_id}/{action}'  # Assumed endpoint
+    action_url = f'{PANEL_URL}/vps/{vps_id}/{action}'
     async with session.post(action_url) as resp:
-        if resp.status == 200 and 'success' in await resp.text():
+        text = await resp.text()
+        if resp.status == 200 and 'success' in text.lower():
             return f"✅ VPS {vps_id} {action}ed successfully."
         return f"❌ Failed to {action} VPS {vps_id}."
 
@@ -180,13 +177,6 @@ async def on_ready():
     logger.info(f'{bot.user} has connected to Discord!')
     if not await login_to_panel():
         logger.error("Initial login failed. Check credentials.")
-    
-    # Show GVM Panel CMD Running logo-like message
-    channel = bot.get_channel(1234567890)  # Replace with your system channel ID
-    if channel:
-        embed = discord.Embed(title="🖥️ GVM Panel CMD Running", description="Bot is online and ready!", color=0x00ff00)
-        embed.set_footer(text="Powered by GVM Panel")
-        await channel.send(embed=embed)
     else:
         logger.info("🖥️ GVM Panel CMD Running - Bot online!")
 
@@ -205,16 +195,19 @@ async def help(ctx):
 !ping - Check latency
 !botinfo - Bot info
 !listvps - List your VPS
-!listall - List all VPS (admin)
-!createvps <name> <ram> <cpu> <disk> <os> <user> [tags] - Create VPS (admin)
-!deletevps <vps_id> - Delete VPS (admin)
-!adduser <user> <pass> - Add user (admin)
-!addadmin <user> - Promote admin (admin)
-!removeadmin <user> - Demote admin (admin)
+!listall - List all VPS (admin only)
+!createvps <name> <ram> <cpu> <disk> <os> <user> [tags] - Create VPS (admin only)
+!deletevps <vps_id> - Delete VPS (admin only)
+!adduser <user> <pass> - Add user (admin only)
+!addadmin <user> - Promote admin (admin only)
+!removeadmin <user> - Demote admin (admin only)
 !manage <vps_id> - Manage VPS with buttons
     """, inline=False)
     embed.set_footer(text="Watching By PowerDev | GVM Panel")
-    await ctx.send(embed=embed)
+    try:
+        await ctx.send(embed=embed)
+    except discord.HTTPException as e:
+        await ctx.send("❌ Error displaying help. Please try again later.")
 
 @bot.command()
 async def listvps(ctx):
@@ -233,10 +226,7 @@ async def createvps(ctx, name: str, ram: int, cpu: int, disk: int, os: str, user
         await ctx.send("❌ Access denied. Admin only.")
         return
     
-    # Send creating message
     msg = await ctx.send("🔄 Creating VPS... (Processing)")
-    
-    # Simulate 10sec process
     await asyncio.sleep(10)
     
     details = await create_vps(name, ram, cpu, disk, os, user, tags)
@@ -244,11 +234,9 @@ async def createvps(ctx, name: str, ram: int, cpu: int, disk: int, os: str, user
         await msg.edit(content=details["error"])
         return
     
-    # Edit to success
     success_msg = f"✅ VPS '{name}' Created Successfully!\nRAM: {details['memory']} | CPU: {details['cpu']} | Disk: {details['disk']} | OS: {details['os']}"
     await msg.edit(content=success_msg)
     
-    # DM full details
     dm_embed = discord.Embed(title=f"🔒 VPS Details for {name}", color=0x00ff00)
     dm_embed.add_field(name="VPS ID", value=details['vps_id'], inline=True)
     dm_embed.add_field(name="Username", value=details['username'], inline=True)
@@ -264,7 +252,6 @@ async def deletevps(ctx, vps_id: str):
     if not is_admin(str(ctx.author.id)):
         await ctx.send("❌ Access denied. Admin only.")
         return
-    # Implement similar to manage_action
     result = await manage_action(vps_id, 'delete')
     await ctx.send(result)
 
@@ -273,7 +260,6 @@ async def adduser(ctx, username: str, password: str):
     if not is_admin(str(ctx.author.id)):
         await ctx.send("❌ Access denied. Admin only.")
         return
-    # Implement add_user async
     await ctx.send("✅ User added.")  # Placeholder
 
 @bot.command()
@@ -297,7 +283,7 @@ async def manage(ctx, vps_id: str):
     await ctx.send(embed=embed, view=view)
 
 async def close_session():
-    if session:
+    if session and not session.closed:
         await session.close()
 
 @bot.event
@@ -307,6 +293,8 @@ async def on_close():
 def main():
     try:
         bot.run(BOT_TOKEN)
+    except Exception as e:
+        logger.error(f"Bot failed to start: {e}")
     finally:
         asyncio.run(close_session())
 
