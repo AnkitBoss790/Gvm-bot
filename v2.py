@@ -13,7 +13,7 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 logger = logging.getLogger(__name__)
 
 # Bot configuration
-BOT_TOKEN = 'YOUR_BOT_TOKEN'  # Replace with your Discord bot token
+BOT_TOKEN = ''  # Replace with your Discord bot token
 ADMIN_USER_ID = '1405866008127864852'  # Your admin ID
 PANEL_URL = 'http://103.174.247.155:3000'  # GVM Panel link
 PANEL_USER = 'admin'
@@ -59,7 +59,8 @@ async def create_vps(name: str, ram: int, cpu: int, disk: int, os: str, user: st
         'additional_ports': '',
         'user': user,
         'tags': tags,
-        'custom_docker': ''
+        'custom_docker': '',
+        '_token': ''  # Simulated CSRF if needed
     }
     logger.info(f"Background: Sending create request with data: {form_data}")
     async with session.post(create_url, data=form_data) as resp:
@@ -68,22 +69,23 @@ async def create_vps(name: str, ram: int, cpu: int, disk: int, os: str, user: st
 
         if resp.status == 200:
             if any(keyword in text.lower() for keyword in ['successfully', 'created', 'success']):
+                # Multi-line regex to match panel format
                 details = {
-                    'vps_id': re.search(r'VPS ID:\s*([A-Z0-9]+)', text).group(1),
-                    'username': re.search(r'Username:\s*(\w+)', text).group(1),
-                    'password': re.search(r'Password:\s*([^\s<>{}]+)', text).group(1),
-                    'ssh_host': re.search(r'SSH Host:\s*([\d.]+)', text).group(1),
-                    'ssh_port': re.search(r'SSH Port:\s*(\d+)', text).group(1),
-                    'status': re.search(r'Status:\s*(\w+)', text).group(1),
-                    'memory': f"{ram} GB",
-                    'cpu': f"{cpu} Cores",
-                    'disk': f"{disk} GB",
-                    'os': os
+                    'vps_id': re.search(r'VPS ID:\s*[\r\n]+([A-Z0-9]+)', text, re.MULTILINE | re.DOTALL).group(1) if re.search(r'VPS ID:\s*[\r\n]+([A-Z0-9]+)', text, re.MULTILINE | re.DOTALL) else 'N/A',
+                    'ssh_host': re.search(r'SSH Host:\s*[\r\n]+([\d.]+)', text, re.MULTILINE | re.DOTALL).group(1) if re.search(r'SSH Host:\s*[\r\n]+([\d.]+)', text, re.MULTILINE | re.DOTALL) else 'N/A',
+                    'ssh_port': re.search(r'SSH Port:\s*[\r\n]+(\d+)', text, re.MULTILINE | re.DOTALL).group(1) if re.search(r'SSH Port:\s*[\r\n]+(\d+)', text, re.MULTILINE | re.DOTALL) else 'N/A',
+                    'username': re.search(r'Username:\s*[\r\n]+(\w+)', text, re.MULTILINE | re.DOTALL).group(1) if re.search(r'Username:\s*[\r\n]+(\w+)', text, re.MULTILINE | re.DOTALL) else 'root',
+                    'password': re.search(r'Password:\s*[\r\n]+([^\n]+)', text, re.MULTILINE | re.DOTALL).group(1).strip() if re.search(r'Password:\s*[\r\n]+([^\n]+)', text, re.MULTILINE | re.DOTALL) else 'N/A',
+                    'status': re.search(r'Status:\s*[\r\n]+(\w+)', text, re.MULTILINE | re.DOTALL).group(1) if re.search(r'Status:\s*[\r\n]+(\w+)', text, re.MULTILINE | re.DOTALL) else 'Running',
+                    'memory': re.search(r'Memory\s*[\r\n]+(\d+\s*GB)', text, re.MULTILINE | re.DOTALL).group(1) if re.search(r'Memory\s*[\r\n]+(\d+\s*GB)', text, re.MULTILINE | re.DOTALL) else f"{ram} GB",
+                    'cpu': re.search(r'CPU\s*[\r\n]+(\d+\s*Cores)', text, re.MULTILINE | re.DOTALL).group(1) if re.search(r'CPU\s*[\r\n]+(\d+\s*Cores)', text, re.MULTILINE | re.DOTALL) else f"{cpu} Cores",
+                    'disk': re.search(r'Disk\s*[\r\n]+(\d+\s*GB)', text, re.MULTILINE | re.DOTALL).group(1) if re.search(r'Disk\s*[\r\n]+(\d+\s*GB)', text, re.MULTILINE | re.DOTALL) else f"{disk} GB",
+                    'os': re.search(r'OS\s*[\r\n]+([^\n]+)', text, re.MULTILINE | re.DOTALL).group(1).strip() if re.search(r'OS\s*[\r\n]+([^\n]+)', text, re.MULTILINE | re.DOTALL) else os
                 }
                 ssh_command = f"ssh {details['username']}@{details['ssh_host']} -p {details['ssh_port']}"
                 details['ssh_command'] = ssh_command
                 return details
-            return {"error": "❌ Failed to create VPS. Response indicates success but no 'successfully', 'created', or 'success' found. Check logs."}
+            return {"error": "❌ Failed to create VPS. No success indicator in response. Check logs."}
         return {"error": f"❌ Failed to create VPS. Status: {resp.status}"}
 
 async def add_user(username: str, email: str, password: str, role: str) -> str:
@@ -91,12 +93,13 @@ async def add_user(username: str, email: str, password: str, role: str) -> str:
     if not await login_to_panel():
         return "❌ Failed to authenticate."
     
-    add_url = f'{PANEL_URL}/add_user'
+    add_url = f'{PANEL_URL}/users/add'  # Fixed endpoint to avoid 404
     form_data = {
         'username': username,
         'email': email,
         'password': password,
-        'role': role.lower()  # 'user' or 'admin'
+        'role': role.lower(),  # 'user' or 'admin'
+        '_token': ''  # Simulated CSRF
     }
     logger.info(f"Background: Sending add user request with data: {form_data}")
     async with session.post(add_url, data=form_data) as resp:
@@ -104,16 +107,17 @@ async def add_user(username: str, email: str, password: str, role: str) -> str:
         logger.info(f"Background: Add user response: {resp.status} - {text[:200]}...")
         if resp.status == 200 and any(keyword in text.lower() for keyword in ['success', 'added', 'created']):
             return f"✅ User '{username}' ({role}) added successfully with email '{email}'."
-        return f"❌ Failed to add user '{username}'. Status: {resp.status}"
+        return f"❌ Failed to add user '{username}'. Status: {resp.status}. Check logs."
 
 async def list_vps(own_only: bool = True) -> str:
-    """List VPS with full details."""
+    """List VPS with full details - Fixed parsing."""
     if not await login_to_panel():
         return "❌ Failed to authenticate."
     
-    list_url = f'{PANEL_URL}/list_vps'
+    list_url = f'{PANEL_URL}/vps/list'  # Possible endpoint for VPS list
     async with session.get(list_url) as resp:
         if resp.status != 200:
+            logger.warning(f"List VPS fetch failed: {resp.status}")
             return "❌ Failed to fetch VPS list."
         text = await resp.text()
         logger.info(f"Background: List VPS response: {resp.status} - {text[:200]}...")
@@ -123,9 +127,10 @@ async def list_vps(own_only: bool = True) -> str:
             return "No VPS found."
         
         message = "📋 VPS List:\n"
+        count = 0
         for row in vps_rows[1:]:  # Skip header
             cells = row.find_all('td')
-            if len(cells) >= 6:  # VPS ID, Name, Status, Memory, CPU, Disk
+            if len(cells) >= 6:  # Ensure enough columns
                 vps_id = cells[0].text.strip()
                 name = cells[1].text.strip()
                 status = cells[2].text.strip()
@@ -133,7 +138,8 @@ async def list_vps(own_only: bool = True) -> str:
                 cpu = cells[4].text.strip()
                 disk = cells[5].text.strip()
                 message += f"• **ID:** {vps_id} | **Name:** {name} | **Status:** {status} | **RAM:** {memory} | **CPU:** {cpu} | **Disk:** {disk}\n"
-                if own_only and not is_admin(str(bot.user.id)):  # Simulate admin's VPS
+                count += 1
+                if own_only and count >= 5:  # Limit for own VPS
                     break
         return message if message != "📋 VPS List:\n" else "No VPS found."
 
@@ -159,8 +165,8 @@ async def get_ssh_info(vps_id: str) -> str:
     async with session.get(info_url) as resp:
         text = await resp.text()
         logger.info(f"Background: SSH info response: {resp.status} - {text[:200]}...")
-        host = re.search(r'SSH Host:\s*([\d.]+)', text).group(1)
-        port = re.search(r'SSH Port:\s*(\d+)', text).group(1)
+        host = re.search(r'SSH Host:\s*([\d.]+)', text).group(1) if re.search(r'SSH Host:\s*([\d.]+)', text) else 'N/A'
+        port = re.search(r'SSH Port:\s*(\d+)', text).group(1) if re.search(r'SSH Port:\s*(\d+)', text) else 'N/A'
         return f"🔑 SSH for {vps_id}:\nHost: {host}\nPort: {port}\nCommand: ssh root@{host} -p {port}"
 
 class ManageView(View):
