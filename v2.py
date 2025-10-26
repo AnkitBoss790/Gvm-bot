@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 # Bot configuration
 BOT_TOKEN = 'YOUR_BOT_TOKEN'  # Replace with your Discord bot token
-ADMIN_USER_ID = 1405866008127864852 # Replace with your Discord user ID (int)
+ADMIN_USER_ID = 1405866008127864852  # Replace with your Discord user ID (int)
 PANEL_URL = 'http://103.174.247.155:3000'
 PANEL_USER = 'admin'
 PANEL_PASS = 'Ankit790$'
@@ -29,44 +29,48 @@ def is_admin(user_id: int) -> bool:
 
 def login_to_panel():
     """Login to GVM Panel and return True if successful."""
-    login_url = f'{PANEL_URL}/login'  # Assumed endpoint
+    login_url = f'{PANEL_URL}/login'
     login_data = {'username': PANEL_USER, 'password': PANEL_PASS}
     response = session.post(login_url, data=login_data)
-    if response.status_code == 200 and ('dashboard' in response.url.lower() or 'success' in response.text.lower()):
-        logger.info("Logged in successfully")
-        return True
-    logger.error("Login failed")
-    return False
+    logger.info(f"Login response: {response.status_code} - {response.text[:200]}...")
+    return response.status_code == 200 and ('dashboard' in response.url.lower() or 'success' in response.text.lower())
 
 def create_vps(name: str, ram: int, cpu: int, disk: int, os: str, user: str, tags: str) -> str:
     """Create a new VPS via form submission with custom specs."""
     if not login_to_panel():
-        return "❌ Failed to authenticate with panel."
-    
-    create_url = f'{PANEL_URL}/create_vps'  # Assumed endpoint
+        return "❌ Failed to authenticate with panel. Please check credentials."
+
+    create_url = f'{PANEL_URL}/create_vps'  # Assumed endpoint; verify with network inspection
     form_data = {
         'name': name,
-        'memory': ram,
-        'cpu': cpu,
-        'disk': disk,
+        'memory': str(ram),
+        'cpu': str(cpu),
+        'disk': str(disk),
         'os': os,
-        'expiration': 30,  # Default from screenshot
-        'bandwidth': 0,    # Default from screenshot
+        'expiration': '30',
+        'bandwidth': '0',
         'additional_ports': '',
         'user': user,
         'tags': tags,
-        'custom_docker': ''  # Optional file not supported
+        'custom_docker': ''
     }
+    logger.info(f"Sending create request with data: {form_data}")
     response = session.post(create_url, data=form_data)
-    if response.status_code == 200 and 'successfully' in response.text.lower():
-        vps_id_match = re.search(r'VPS ID: ([A-Z0-9]+)', response.text)
-        host_match = re.search(r'SSH Host: ([\d.]+)', response.text)
-        if vps_id_match and host_match:
-            vps_id = vps_id_match.group(1)
-            host = host_match.group(1)
-            ssh_command = f"ssh root@{host} -p 23470"
-            return f"✅ VPS '{name}' created!\nID: {vps_id}\nHost: {host}\nSSH: {ssh_command}"
-        return "✅ VPS created successfully! Check panel for details."
+    logger.info(f"Create response: {response.status_code} - {response.text[:200]}...")
+
+    if response.status_code == 200:
+        if 'successfully' in response.text.lower():
+            vps_id_match = re.search(r'VPS ID: ([A-Z0-9]+)', response.text)
+            host_match = re.search(r'SSH Host: ([\d.]+)', response.text)
+            port_match = re.search(r'SSH Port: (\d+)', response.text)
+            if vps_id_match and host_match:
+                vps_id = vps_id_match.group(1)
+                host = host_match.group(1)
+                port = port_match.group(1) if port_match else '23470'  # Default to 23470 if not found
+                ssh_command = f"ssh root@{host} -p {port}"
+                return f"✅ VPS '{name}' created!\nID: {vps_id}\nHost: {host}\nPort: {port}\nSSH: {ssh_command}"
+            return "✅ VPS created successfully! Check panel for details."
+        return "❌ Failed to create VPS. Response indicates success but no 'successfully' found. Check logs or panel."
     return f"❌ Failed to create VPS. Status: {response.status_code}"
 
 def list_vps(own_only: bool = True) -> str:
@@ -74,25 +78,25 @@ def list_vps(own_only: bool = True) -> str:
     if not login_to_panel():
         return "❌ Failed to authenticate."
     
-    list_url = f'{PANEL_URL}/list_vps'  # Assumed endpoint
+    list_url = f'{PANEL_URL}/list_vps'
     response = session.get(list_url)
     if response.status_code != 200:
         return "❌ Failed to fetch VPS list."
     
     soup = BeautifulSoup(response.text, 'html.parser')
-    vps_rows = soup.find_all('tr')  # Assume table rows for VPS
+    vps_rows = soup.find_all('tr')
     if not vps_rows:
         return "No VPS found."
     
     message = "📋 VPS List:\n"
-    for row in vps_rows[1:]:  # Skip header
+    for row in vps_rows[1:]:
         cells = row.find_all('td')
         if len(cells) >= 3:
             vps_id = cells[0].text.strip()
             name = cells[1].text.strip()
             status = cells[2].text.strip()
             message += f"• ID: {vps_id} | Name: {name} | Status: {status}\n"
-            if own_only and not is_admin(int(bot.user.id)):  # Pseudo-check
+            if own_only and not is_admin(int(bot.user.id)):
                 break
     return message if message != "📋 VPS List:\n" else "No VPS to show."
 
@@ -101,7 +105,7 @@ def delete_vps(vps_id: str) -> str:
     if not login_to_panel():
         return "❌ Failed to authenticate."
     
-    delete_url = f'{PANEL_URL}/delete_vps/{vps_id}'  # Assumed endpoint
+    delete_url = f'{PANEL_URL}/delete_vps/{vps_id}'
     response = session.post(delete_url)
     if response.status_code == 200 and 'deleted' in response.text.lower():
         return f"✅ VPS {vps_id} deleted."
