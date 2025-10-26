@@ -5,8 +5,7 @@ import aiohttp
 from bs4 import BeautifulSoup
 import discord
 from discord.ext import commands
-from discord import ui
-from discord.ui import View, Button
+from discord import ui, Button, View
 
 # Configure logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -15,7 +14,7 @@ logger = logging.getLogger(__name__)
 # Bot configuration
 BOT_TOKEN = 'YOUR_BOT_TOKEN'  # Replace with your Discord bot token
 ADMIN_USER_ID = '1405866008127864852'  # Your admin ID
-PANEL_URL = 'http://103.174.247.155:3000'
+PANEL_URL = 'http://103.174.247.155:3000'  # GVM Panel link
 PANEL_USER = 'admin'
 PANEL_PASS = ''
 
@@ -61,18 +60,17 @@ async def create_vps(name: str, ram: int, cpu: int, disk: int, os: str, user: st
         'tags': tags,
         'custom_docker': ''
     }
-    logger.info(f"Sending create request with data: {form_data}")
+    logger.info(f"Background: Sending create request with data: {form_data}")
     async with session.post(create_url, data=form_data) as resp:
         text = await resp.text()
-        logger.info(f"Create response: {resp.status} - {text[:500]}...")
+        logger.info(f"Background: Create response: {resp.status} - {text[:500]}...")
 
         if resp.status == 200:
             if any(keyword in text.lower() for keyword in ['successfully', 'created', 'success']):
-                # Extract details with precise regex based on panel format
                 details = {
                     'vps_id': re.search(r'VPS ID:\s*([A-Z0-9]+)', text).group(1),
                     'username': re.search(r'Username:\s*(\w+)', text).group(1),
-                    'password': re.search(r'Password:\s*([^\s<]+)', text).group(1),
+                    'password': re.search(r'Password:\s*([^\s<>{}]+)', text).group(1),
                     'ssh_host': re.search(r'SSH Host:\s*([\d.]+)', text).group(1),
                     'ssh_port': re.search(r'SSH Port:\s*(\d+)', text).group(1),
                     'status': re.search(r'Status:\s*(\w+)', text).group(1),
@@ -87,6 +85,26 @@ async def create_vps(name: str, ram: int, cpu: int, disk: int, os: str, user: st
             return {"error": "❌ Failed to create VPS. Response indicates success but no 'successfully', 'created', or 'success' found. Check logs."}
         return {"error": f"❌ Failed to create VPS. Status: {resp.status}"}
 
+async def add_user(username: str, email: str, password: str, role: str) -> str:
+    """Add a new user with email and role (user or admin)."""
+    if not await login_to_panel():
+        return "❌ Failed to authenticate."
+    
+    add_url = f'{PANEL_URL}/add_user'
+    form_data = {
+        'username': username,
+        'email': email,
+        'password': password,
+        'role': role.lower()  # 'user' or 'admin'
+    }
+    logger.info(f"Background: Sending add user request with data: {form_data}")
+    async with session.post(add_url, data=form_data) as resp:
+        text = await resp.text()
+        logger.info(f"Background: Add user response: {resp.status} - {text[:200]}...")
+        if resp.status == 200 and any(keyword in text.lower() for keyword in ['success', 'added', 'created']):
+            return f"✅ User '{username}' ({role}) added successfully with email '{email}'."
+        return f"❌ Failed to add user '{username}'. Status: {resp.status}"
+
 async def list_vps(own_only: bool = True) -> str:
     """List VPS with full details."""
     if not await login_to_panel():
@@ -97,15 +115,16 @@ async def list_vps(own_only: bool = True) -> str:
         if resp.status != 200:
             return "❌ Failed to fetch VPS list."
         text = await resp.text()
+        logger.info(f"Background: List VPS response: {resp.status} - {text[:200]}...")
         soup = BeautifulSoup(text, 'html.parser')
         vps_rows = soup.find_all('tr')
         if not vps_rows:
             return "No VPS found."
         
         message = "📋 VPS List:\n"
-        for row in vps_rows[1:]:
+        for row in vps_rows[1:]:  # Skip header
             cells = row.find_all('td')
-            if len(cells) >= 6:
+            if len(cells) >= 6:  # VPS ID, Name, Status, Memory, CPU, Disk
                 vps_id = cells[0].text.strip()
                 name = cells[1].text.strip()
                 status = cells[2].text.strip()
@@ -113,9 +132,9 @@ async def list_vps(own_only: bool = True) -> str:
                 cpu = cells[4].text.strip()
                 disk = cells[5].text.strip()
                 message += f"• **ID:** {vps_id} | **Name:** {name} | **Status:** {status} | **RAM:** {memory} | **CPU:** {cpu} | **Disk:** {disk}\n"
-                if own_only:
+                if own_only and not is_admin(str(bot.user.id)):  # Simulate admin's VPS
                     break
-        return message if message != "📋 VPS List:\n" else "No VPS to show."
+        return message if message != "📋 VPS List:\n" else "No VPS found."
 
 async def manage_action(vps_id: str, action: str) -> str:
     """Perform action on VPS (start, stop, etc.)."""
@@ -125,6 +144,7 @@ async def manage_action(vps_id: str, action: str) -> str:
     action_url = f'{PANEL_URL}/vps/{vps_id}/{action}'
     async with session.post(action_url) as resp:
         text = await resp.text()
+        logger.info(f"Background: Manage action {action} response: {resp.status} - {text[:200]}...")
         if resp.status == 200 and 'success' in text.lower():
             return f"✅ VPS {vps_id} {action}ed successfully."
         return f"❌ Failed to {action} VPS {vps_id}."
@@ -137,6 +157,7 @@ async def get_ssh_info(vps_id: str) -> str:
     info_url = f'{PANEL_URL}/vps/{vps_id}/ssh'
     async with session.get(info_url) as resp:
         text = await resp.text()
+        logger.info(f"Background: SSH info response: {resp.status} - {text[:200]}...")
         host = re.search(r'SSH Host:\s*([\d.]+)', text).group(1)
         port = re.search(r'SSH Port:\s*(\d+)', text).group(1)
         return f"🔑 SSH for {vps_id}:\nHost: {host}\nPort: {port}\nCommand: ssh root@{host} -p {port}"
@@ -184,18 +205,22 @@ async def on_ready():
 
 @bot.command()
 async def ping(ctx):
+    logger.info(f"Background: Processing ping command from {ctx.author}")
     await ctx.send('🏓 Pong!')
 
 @bot.command()
 async def botinfo(ctx):
+    logger.info(f"Background: Processing botinfo command from {ctx.author}")
     await ctx.send('🤖 GVM VPS Bot\nVersion: 1.0')
 
 @bot.command()
 async def listvps(ctx):
-    await ctx.send(await list_vps())
+    logger.info(f"Background: Processing listvps command from {ctx.author}")
+    await ctx.send(await list_vps(own_only=True))
 
 @bot.command()
 async def listall(ctx):
+    logger.info(f"Background: Processing listall command from {ctx.author}")
     if is_admin(str(ctx.author.id)):
         await ctx.send(await list_vps(own_only=False))
     else:
@@ -203,6 +228,7 @@ async def listall(ctx):
 
 @bot.command()
 async def createvps(ctx, name: str, ram: int, cpu: int, disk: int, os: str, user: str, *, tags: str = ""):
+    logger.info(f"Background: Processing createvps command from {ctx.author}")
     if not is_admin(str(ctx.author.id)):
         await ctx.send("❌ Access denied. Admin only.")
         return
@@ -215,8 +241,7 @@ async def createvps(ctx, name: str, ram: int, cpu: int, disk: int, os: str, user
         await msg.edit(content=details["error"])
         return
     
-    success_msg = f"✅ VPS '{name}' Created Successfully!\nRAM: {details['memory']} | CPU: {details['cpu']} | Disk: {details['disk']} | OS: {details['os']}"
-    await msg.edit(content=success_msg)
+    await msg.edit(content="✅ VPS Created Successfully!")
     
     dm_embed = discord.Embed(title=f"🔒 VPS Details for {name}", color=0x00ff00)
     dm_embed.add_field(name="VPS ID", value=details['vps_id'], inline=True)
@@ -226,10 +251,28 @@ async def createvps(ctx, name: str, ram: int, cpu: int, disk: int, os: str, user
     dm_embed.add_field(name="SSH Port", value=details['ssh_port'], inline=True)
     dm_embed.add_field(name="Status", value=details['status'], inline=True)
     dm_embed.add_field(name="SSH Command", value=details['ssh_command'], inline=False)
+    dm_embed.add_field(name="Memory", value=details['memory'], inline=True)
+    dm_embed.add_field(name="CPU", value=details['cpu'], inline=True)
+    dm_embed.add_field(name="Disk", value=details['disk'], inline=True)
+    dm_embed.add_field(name="OS", value=details['os'], inline=True)
     await ctx.author.send(embed=dm_embed)
 
 @bot.command()
+async def adduser(ctx, username: str, email: str, password: str, role: str):
+    """Add a new user (admin only). Usage: !adduser <username> <email> <pass> <role> (user or admin)"""
+    logger.info(f"Background: Processing adduser command from {ctx.author}")
+    if not is_admin(str(ctx.author.id)):
+        await ctx.send("❌ Access denied. Admin only.")
+        return
+    if role not in ['user', 'admin']:
+        await ctx.send("❌ Invalid role. Use 'user' or 'admin'.")
+        return
+    result = await add_user(username, email, password, role)
+    await ctx.send(result)
+
+@bot.command()
 async def deletevps(ctx, vps_id: str):
+    logger.info(f"Background: Processing deletevps command from {ctx.author}")
     if not is_admin(str(ctx.author.id)):
         await ctx.send("❌ Access denied. Admin only.")
         return
@@ -237,14 +280,8 @@ async def deletevps(ctx, vps_id: str):
     await ctx.send(result)
 
 @bot.command()
-async def adduser(ctx, username: str, password: str):
-    if not is_admin(str(ctx.author.id)):
-        await ctx.send("❌ Access denied. Admin only.")
-        return
-    await ctx.send("✅ User added.")  # Placeholder
-
-@bot.command()
 async def addadmin(ctx, username: str):
+    logger.info(f"Background: Processing addadmin command from {ctx.author}")
     if not is_admin(str(ctx.author.id)):
         await ctx.send("❌ Access denied. Admin only.")
         return
@@ -252,6 +289,7 @@ async def addadmin(ctx, username: str):
 
 @bot.command()
 async def removeadmin(ctx, username: str):
+    logger.info(f"Background: Processing removeadmin command from {ctx.author}")
     if not is_admin(str(ctx.author.id)):
         await ctx.send("❌ Access denied. Admin only.")
         return
@@ -259,6 +297,7 @@ async def removeadmin(ctx, username: str):
 
 @bot.command()
 async def manage(ctx, vps_id: str):
+    logger.info(f"Background: Processing manage command from {ctx.author}")
     view = ManageView(vps_id)
     embed = discord.Embed(title=f"🔧 Manage VPS {vps_id}", description="Click a button below:", color=0x0099ff)
     await ctx.send(embed=embed, view=view)
