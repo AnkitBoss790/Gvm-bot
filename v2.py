@@ -5,7 +5,8 @@ import aiohttp
 from bs4 import BeautifulSoup
 import discord
 from discord.ext import commands
-from discord import ui, Button, View
+from discord import ui
+from discord.ui import View, Button
 
 # Configure logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
