@@ -5,7 +5,8 @@ import aiohttp
 from bs4 import BeautifulSoup
 import discord
 from discord.ext import commands
-from discord import ui, Button, View
+from discord import ui
+from discord.ui import View, Button
 
 # Configure logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -16,7 +17,7 @@ BOT_TOKEN = 'YOUR_BOT_TOKEN'  # Replace with your Discord bot token
 ADMIN_USER_ID = '1405866008127864852'  # Your admin ID
 PANEL_URL = 'http://103.174.247.155:3000'
 PANEL_USER = 'admin'
-PANEL_PASS = 'Ankit790$'
+PANEL_PASS = ''
 
 # Global session for HTTP requests
 session = None
@@ -67,13 +68,14 @@ async def create_vps(name: str, ram: int, cpu: int, disk: int, os: str, user: st
 
         if resp.status == 200:
             if any(keyword in text.lower() for keyword in ['successfully', 'created', 'success']):
+                # Extract details with precise regex based on panel format
                 details = {
-                    'vps_id': re.search(r'VPS ID:\s*([A-Z0-9]+)', text).group(1) if re.search(r'VPS ID:\s*([A-Z0-9]+)', text) else 'N/A',
-                    'username': re.search(r'Username:\s*(\w+)', text).group(1) if re.search(r'Username:\s*(\w+)', text) else 'root',
-                    'password': re.search(r'Password:\s*([^\s<]+)', text).group(1) if re.search(r'Password:\s*([^\s<]+)', text) else 'N/A',
-                    'ssh_host': re.search(r'SSH Host:\s*([\d.]+)', text).group(1) if re.search(r'SSH Host:\s*([\d.]+)', text) else 'N/A',
-                    'ssh_port': re.search(r'SSH Port:\s*(\d+)', text).group(1) if re.search(r'SSH Port:\s*(\d+)', text) else '23470',
-                    'status': re.search(r'Status:\s*(\w+)', text).group(1) if re.search(r'Status:\s*(\w+)', text) else 'Running',
+                    'vps_id': re.search(r'VPS ID:\s*([A-Z0-9]+)', text).group(1),
+                    'username': re.search(r'Username:\s*(\w+)', text).group(1),
+                    'password': re.search(r'Password:\s*([^\s<]+)', text).group(1),
+                    'ssh_host': re.search(r'SSH Host:\s*([\d.]+)', text).group(1),
+                    'ssh_port': re.search(r'SSH Port:\s*(\d+)', text).group(1),
+                    'status': re.search(r'Status:\s*(\w+)', text).group(1),
                     'memory': f"{ram} GB",
                     'cpu': f"{cpu} Cores",
                     'disk': f"{disk} GB",
@@ -135,8 +137,8 @@ async def get_ssh_info(vps_id: str) -> str:
     info_url = f'{PANEL_URL}/vps/{vps_id}/ssh'
     async with session.get(info_url) as resp:
         text = await resp.text()
-        host = re.search(r'SSH Host:\s*([\d.]+)', text).group(1) if re.search(r'SSH Host:\s*([\d.]+)', text) else 'N/A'
-        port = re.search(r'SSH Port:\s*(\d+)', text).group(1) if re.search(r'SSH Port:\s*(\d+)', text) else '23470'
+        host = re.search(r'SSH Host:\s*([\d.]+)', text).group(1)
+        port = re.search(r'SSH Port:\s*(\d+)', text).group(1)
         return f"🔑 SSH for {vps_id}:\nHost: {host}\nPort: {port}\nCommand: ssh root@{host} -p {port}"
 
 class ManageView(View):
@@ -186,28 +188,7 @@ async def ping(ctx):
 
 @bot.command()
 async def botinfo(ctx):
-    await ctx.send('🤖 GVM VPS Bot\nVersion: 1.0\nWatching By PowerDev')
-
-@bot.command()
-async def help(ctx):
-    embed = discord.Embed(title="🛠️ GVM Panel Help", color=0x00ff00)
-    embed.add_field(name="Commands", value="""
-!ping - Check latency
-!botinfo - Bot info
-!listvps - List your VPS
-!listall - List all VPS (admin only)
-!createvps <name> <ram> <cpu> <disk> <os> <user> [tags] - Create VPS (admin only)
-!deletevps <vps_id> - Delete VPS (admin only)
-!adduser <user> <pass> - Add user (admin only)
-!addadmin <user> - Promote admin (admin only)
-!removeadmin <user> - Demote admin (admin only)
-!manage <vps_id> - Manage VPS with buttons
-    """, inline=False)
-    embed.set_footer(text="Watching By PowerDev | GVM Panel")
-    try:
-        await ctx.send(embed=embed)
-    except discord.HTTPException as e:
-        await ctx.send("❌ Error displaying help. Please try again later.")
+    await ctx.send('🤖 GVM VPS Bot\nVersion: 1.0')
 
 @bot.command()
 async def listvps(ctx):
