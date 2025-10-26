@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 # Bot configuration
 BOT_TOKEN = 'YOUR_BOT_TOKEN'  # Replace with your Discord bot token
-ADMIN_USER_ID = YOUR_ADMIN_USER_ID  # Replace with your Discord user ID (int)
+ADMIN_USER_ID = 1405866008127864852 # Replace with your Discord user ID (int)
 PANEL_URL = 'http://103.174.247.155:3000'
 PANEL_USER = 'admin'
 PANEL_PASS = 'Ankit790$'
